@@ -5,17 +5,20 @@
 This project is building a Project Management App. Key features:
 - A user can sign in
 - When signed in, the user sees a Kanban board representing their project
-- The Kanban board has fixed columns that can be renamed
+- The Kanban board has columns that the user and the AI can add, rename, and delete
 - The cards on the Kanban board can be moved with drag and drop, and edited
-- There is an AI chat feature in a sidebar; the AI is able to create / edit / move one or more cards
+- Users and the AI can create, edit, move, and delete cards
+- There is an AI chat feature in a sidebar; the AI can create / edit / move / delete cards and add / rename / delete columns
 
 ## Limitations
 
-For the MVP, there will only be a user sign in (hardcoded to 'user' and 'password') but the database will support multiple users for future.
+For the MVP, there will only be a user sign in (hardcoded to 'user' and 'password', client-only) but the database will support multiple users for future.
 
 For the MVP, there will only be 1 Kanban board per signed in user.
 
 For the MVP, this will run locally (in a docker container)
+
+AI chat history stays in the current browser session only. When the AI updates the board, it returns a full replacement board.
 
 ## Technical Decisions
 
@@ -25,8 +28,11 @@ For the MVP, this will run locally (in a docker container)
 - Use "uv" as the package manager for python in the Docker container
 - Use OpenRouter for the AI calls. An OPENROUTER_API_KEY is in .env in the project root
 - Use `openai/gpt-oss-120b` as the model
-- Use SQLLite local database for the database, creating a new db if it doesn't exist
+- Use SQLite local database for the database, creating a new db if it doesn't exist
+- Normalized tables (users, columns, cards). Seed the dummy user with the frontend demo board.
 - Start and Stop server scripts for Mac, PC, Linux in scripts/
+- App listens on port 8000
+- SQLite file is stored on a Docker volume so it survives container restarts
 
 ## Starting Point
 
