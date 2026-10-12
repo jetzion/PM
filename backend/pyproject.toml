@@ -6,3 +6,9 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx",
+    "pytest",
+]

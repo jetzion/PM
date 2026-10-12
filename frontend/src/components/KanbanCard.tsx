@@ -1,3 +1,4 @@
+import { useState, type FormEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
@@ -5,16 +6,31 @@ import type { Card } from "@/lib/kanban";
 
 type KanbanCardProps = {
   card: Card;
+  onUpdate: (cardId: string, title: string, details: string) => void;
   onDelete: (cardId: string) => void;
 };
 
-export const KanbanCard = ({ card, onDelete }: KanbanCardProps) => {
+export const KanbanCard = ({ card, onUpdate, onDelete }: KanbanCardProps) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [formState, setFormState] = useState({
+    title: card.title,
+    details: card.details,
+  });
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: card.id });
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!formState.title.trim()) {
+      return;
+    }
+    onUpdate(card.id, formState.title.trim(), formState.details.trim());
+    setIsEditing(false);
   };
 
   return (
@@ -30,24 +46,85 @@ export const KanbanCard = ({ card, onDelete }: KanbanCardProps) => {
       {...listeners}
       data-testid={`card-${card.id}`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h4 className="font-display text-base font-semibold text-[var(--navy-dark)]">
-            {card.title}
-          </h4>
-          <p className="mt-2 text-sm leading-6 text-[var(--gray-text)]">
-            {card.details}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => onDelete(card.id)}
-          className="rounded-full border border-transparent px-2 py-1 text-xs font-semibold text-[var(--gray-text)] transition hover:border-[var(--stroke)] hover:text-[var(--navy-dark)]"
-          aria-label={`Delete ${card.title}`}
+      {isEditing ? (
+        <form
+          onSubmit={handleSubmit}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="space-y-3"
         >
-          Remove
-        </button>
-      </div>
+          <input
+            value={formState.title}
+            onChange={(event) =>
+              setFormState((prev) => ({ ...prev, title: event.target.value }))
+            }
+            aria-label={`Edit title for ${card.title}`}
+            className="w-full rounded-xl border border-[var(--stroke)] bg-white px-3 py-2 text-sm font-semibold text-[var(--navy-dark)] outline-none transition focus:border-[var(--primary-blue)]"
+            required
+          />
+          <textarea
+            value={formState.details}
+            onChange={(event) =>
+              setFormState((prev) => ({ ...prev, details: event.target.value }))
+            }
+            aria-label={`Edit details for ${card.title}`}
+            rows={3}
+            className="w-full resize-none rounded-xl border border-[var(--stroke)] bg-white px-3 py-2 text-sm text-[var(--gray-text)] outline-none transition focus:border-[var(--primary-blue)]"
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              className="rounded-full bg-[var(--secondary-purple)] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:brightness-110"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFormState({ title: card.title, details: card.details });
+                setIsEditing(false);
+              }}
+              className="rounded-full border border-[var(--stroke)] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:text-[var(--navy-dark)]"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h4 className="font-display text-base font-semibold text-[var(--navy-dark)]">
+              {card.title}
+            </h4>
+            <p className="mt-2 text-sm leading-6 text-[var(--gray-text)]">
+              {card.details}
+            </p>
+          </div>
+          <div
+            onPointerDown={(event) => event.stopPropagation()}
+            className="flex flex-col gap-2"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setFormState({ title: card.title, details: card.details });
+                setIsEditing(true);
+              }}
+              className="rounded-full border border-transparent px-2 py-1 text-xs font-semibold text-[var(--gray-text)] transition hover:border-[var(--stroke)] hover:text-[var(--navy-dark)]"
+              aria-label={`Edit ${card.title}`}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(card.id)}
+              className="rounded-full border border-transparent px-2 py-1 text-xs font-semibold text-[var(--gray-text)] transition hover:border-[var(--stroke)] hover:text-[var(--navy-dark)]"
+              aria-label={`Delete ${card.title}`}
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
     </article>
   );
 };

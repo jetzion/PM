@@ -1,6 +1,21 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppShell } from "@/components/AppShell";
+import { initialData } from "@/lib/kanban";
+
+const mockBoardFetch = () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(initialData), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+    )
+  );
+};
 
 const signIn = async () => {
   await userEvent.type(screen.getByLabelText(/username/i), "user");
@@ -11,6 +26,11 @@ const signIn = async () => {
 describe("AppShell", () => {
   beforeEach(() => {
     localStorage.clear();
+    mockBoardFetch();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("requires the demo credentials", async () => {
