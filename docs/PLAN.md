@@ -11,9 +11,9 @@ These were agreed before implementation. Do not reopen them unless the user asks
 - Port: `8000` (`http://localhost:8000`)
 - One Docker container. FastAPI serves the static Next.js export at `/` and JSON APIs under `/api`.
 - SQLite file on a Docker volume so data survives container restarts. Create the DB if it is missing.
-- Schema is normalized tables, not a JSON blob. Multiple users in the schema; MVP seeds one user (`user` / `password`) with one board.
+- Schema is normalized tables, not a JSON blob.
 - New users start with the current frontend demo cards and columns.
-- Login is client-only (hardcoded `user` / `password`). The backend Kanban APIs operate on that seeded user.
+- Reopened by the user on 2026-10-15 (Part 11): real user accounts with server-side sessions and multiple boards per user replace the client-only login and one-board limit. The demo account `user` / `password` is still seeded.
 - Users and the AI can create, edit, move, and delete cards.
 - Users and the AI can add, rename, and delete columns.
 - AI chat history lives in `sessionStorage` only (survives refresh, dies when the tab session ends). Not stored in the database.
@@ -38,9 +38,15 @@ These were agreed before implementation. Do not reopen them unless the user asks
 - The signed-in board opens an AI chat sidebar by default. It can be closed and reopened. History is stored in `sessionStorage` under `pm-chat-history`.
 - The sidebar sends prior user/assistant messages as `history` and the new text as `message`. A non-null `board` in the response replaces the visible board immediately.
 
-## Current remaining gaps
+## Current state
 
-- Login is still client-only by design for the MVP.
+Parts 1-22 are complete. The app is a multi-user, multi-board Kanban with server-side auth and account management, cards with priority, due dates, and per-board labels, a board filter bar, a cross-board overview, a per-board done column, card checklists, card comments, board duplication, and board sharing between users. The roadmap below is finished; anything further is new scope to propose. Work the roadmap parts in order, one or two per iteration, keeping every suite green.
+
+## Test status
+
+- Backend: 105 pytest tests, 99% line coverage.
+- Frontend unit: 81 Vitest tests (95% line coverage of `src/` app code).
+- E2E: 23 Playwright tests against Docker, stable over 3 repeated runs.
 
 ---
 
@@ -349,6 +355,94 @@ None until the schema is approved.
 - If the AI changes the board, the Kanban updates in place and the change is persisted.
 
 ---
+
+## Part 11: Users and multiple boards
+
+**Goal:** Real accounts and many boards per user. Done 2026-10-15.
+
+### Checklist
+
+- [x] `users.password_hash` (stdlib scrypt), `sessions` table, `pm_session` httpOnly cookie
+- [x] Register, login, logout, me, change password routes
+- [x] `boards` table; columns/cards keyed by `(board_id, id)` so ids are unique per board
+- [x] Board list/create/rename/delete; all column/card/chat routes under `/api/boards/{id}` with an ownership check (404 for other users' boards)
+- [x] Migrate the legacy single-board schema in place on startup (verified against the real `pm-data` volume)
+- [x] Frontend: server-backed sign-in and registration, workspace sidebar with board list, create/rename/delete board, remembered active board, account panel, per-board chat history
+- [x] Docs: `docs/DATABASE.md`, `backend/AGENTS.md`, `frontend/AGENTS.md`, root `AGENTS.md`, `CLAUDE.md`
+
+### Tests
+
+- [x] Pytest: auth flows, hashing, session revocation, password change, board CRUD, per-board id independence, cross-user isolation on every board route, move ordering, legacy migration
+- [x] Vitest: AppShell auth flows, Workspace board management and account panel, API client errors
+- [x] Playwright: UI registration and sign-in, demo user, two-user isolation, board lifecycle, password change, existing persistence and chat flows
+
+---
+
+## Roadmap (next parts)
+
+Each part: backend + tests, frontend + tests, e2e, docs. Keep it simple.
+
+### Part 12: Richer cards (done 2026-10-15)
+- [x] Card `priority` (`low` / `medium` / `high`, default `medium`) and optional `dueDate` (`YYYY-MM-DD`). Schema v2 adds the columns with `ALTER TABLE` (`add_card_fields`); verified on the live volume.
+- [x] Extend `BoardData` card shape, Pydantic models, AI JSON schema (plus today's date in the prompt), and `DEMO_BOARD` / `initialData`.
+- [x] Card UI: priority badge, due date with overdue / today highlight, set both when adding and editing. `PATCH` with `"dueDate": null` clears; omitting it keeps it.
+- [x] Tests: `test_cards.py`, v1 -> v2 migration, chat validation of card fields; `CardMeta.test.tsx`, date helpers, add/edit field payloads; e2e set/persist/clear.
+
+### Part 13: Labels (done 2026-10-15)
+- [x] Per-board labels (`labels` table, color one of yellow/blue/purple/navy/gray) and a `card_labels` join table; schema v3. `BoardData` gains `labels`, cards gain `labelIds` (returned in board label order).
+- [x] Routes `POST /labels`, `PATCH|DELETE /labels/{id}`; cards accept `labelIds` on create and update. Deleting a label untags its cards (cascade). AI schema includes labels.
+- [x] UI: label chips on cards and the drag preview, label picker in the add and edit card forms, `LabelManager` panel (add, rename on blur, recolor, delete) behind a "Labels (n)" toggle.
+- [x] Tests: `test_labels.py` (lifecycle, validation, per-board scoping, cascade, PUT round trip, AI, isolation); `LabelManager.test.tsx`, label chips, board label flow; e2e create/tag/persist/delete.
+- [x] Fixed an e2e flake at its root: `start.sh` returned before the app was healthy, so Playwright ran `start.sh` again and replaced the container mid-test (seen in `docker events`). Both start scripts now wait for `/api/health`.
+
+### Part 14: Search and filter (done 2026-10-15)
+- [x] Client-side `FilterBar` on a board: text search over title/details, priority, label, overdue only. "Showing X of Y cards" and "Clear filters" while active; empty columns say "No matching cards". Pure matcher `cardMatches` in `kanban.ts`. Filters are per board view and not persisted.
+- [x] Tests: matcher unit tests, board filter flow, e2e filter by every field.
+
+### Part 15: Account management (done 2026-10-15)
+- [x] `POST /api/auth/delete-account` `{password}` cascades all of the user's data; `POST /api/auth/logout-all` ends every session. Both clear the cookie.
+- [x] Account panel: "Sign out everywhere" and a password-confirmed "Delete account".
+- [x] Tests: backend isolation of other users' data and username reuse; unit flows; e2e across two browser contexts and deletion then failed sign-in.
+
+### Part 16: Board overview (done 2026-10-15)
+- [x] `GET /api/overview?today=YYYY-MM-DD` (client passes its local date): per-board card count, overdue count, priority counts; plus up to 20 overdue or next-7-days cards across boards, by due date.
+- [x] "Overview" item at the top of the board nav (remembered like a board): stat tiles, one priority bar per board with a text legend that carries every count, and a "Due soon" list that opens the card's board.
+- [x] Priority is ordinal, so it now uses one purple ramp (`--priority-low|medium|high`, light to dark) for both the bar and the card badges. Validated with the dataviz checks: lightness steps 0.86 / 0.65 / 0.46, badge text >= 4.5:1. The previous purple/blue/gray set failed the categorical checks.
+- [x] Tests: `test_overview.py` (aggregates, 7-day window boundary, ordering, cap, date validation, isolation); `Overview.test.tsx`; Workspace overview navigation; e2e.
+
+### Part 17: Completed cards (done 2026-10-15)
+- [x] `boards.done_column_id` (schema v4; not a FK, since a composite `SET NULL` would null `board_id` too, so deleting that column clears it in the route). The upgrade backfills it once from a column titled "Done"; later startups never re-apply it. New boards and the demo board use `col-done`.
+- [x] `BoardData.doneColumnId`, `PUT /api/boards/{id}/done-column {columnId | null}`, validated in full replacements and part of the AI schema.
+- [x] Done cards are never overdue: card chip reads "Done, was due ...", "Overdue only" skips them, the overview leaves them out of overdue and "Due soon" and adds `doneCount`. Columns get a "Mark done" / "Done column" toggle (`aria-pressed`); the header shows "N done".
+- [x] Tests: `test_done_column.py` (lifecycle, delete clears, PUT validation, AI, isolation, one-time backfill), overview exclusion, unit toggle/chip/filter, e2e. Live volume verified at v4 with every board backfilled.
+
+### Part 18: Card checklists (done 2026-10-15)
+- [x] `checklist_items` table (schema v5), ids unique per board, cascade with the card. Cards carry `checklist: {id, text, done}[]` in `BoardData`, validated in replacements and in the AI schema. Demo card-5 has two items.
+- [x] Routes `POST /cards/{id}/checklist`, `PATCH|DELETE /cards/{id}/checklist/{itemId}` (items are addressed through their own card; positions stay contiguous).
+- [x] UI: "n/m done" chip on cards, a per-card "Add / Show / Hide checklist" toggle with check, add, and remove. Pointer and key events inside it are stopped so they never start a drag. The checkbox is server-authoritative (flips when the response arrives), like every other board change.
+- [x] Fixed a layout regression found by screenshot: the open checklist pushed Edit/Remove outside the card (flex child `min-width: auto`). Guarded by an e2e geometry check that was shown to fail without the fix.
+
+### Part 19: Card comments (done 2026-10-15)
+- [x] `comments` table (schema v6) keyed to the board, not the card: `replace_board` re-inserts every card, so a card foreign key would cascade comments away on each AI update. `prune_comments` deletes comments whose card is really gone (after `replace_board`, card delete, and column delete).
+- [x] `GET|POST /cards/{id}/comments`, `DELETE /cards/{id}/comments/{commentId}` return the card's comments `{id, body, author, createdAt}` (ISO UTC). Cards carry a read-only `commentCount` in `BoardData`, ignored on write and not in the AI schema.
+- [x] UI: "Comments (n)" toggle per card; the thread loads on open, adds and deletes, and patches the card's `commentCount` locally from the returned list (the one place board state is not replaced from a board response).
+- [x] Tests: survival through AI replacement, PUT, and moves; pruning through all three removal paths; isolation; unit thread and count sync; e2e including a real PUT replacement and the card-layout guard.
+
+### Part 20: Duplicate board (done 2026-10-15)
+- [x] `POST /api/boards/{id}/duplicate {name}` copies columns, cards, checklists, labels, and the done column (not comments) into a new board.
+- [x] "Duplicate board" in the board header creates "{name} copy" and opens it.
+
+### Part 21: Board sharing (done 2026-10-15)
+- [x] `board_members` table (schema v7). A board is visible to its owner (`boards.user_id`) and its members; everyone else still gets 404.
+- [x] Two dependencies: `shared_board` (owner or member) guards all content routes; `owned_board` (403 for members) guards rename, delete, and adding members. Members can edit cards, columns, labels, checklists, the done column, chat with the AI, and duplicate (the copy is theirs).
+- [x] `GET|POST /members` (owner adds by username, case-insensitive; 404 unknown, 409 already has access), `DELETE /members/{userId}` (owner removes anyone, a member can remove only themselves). Comments: author or owner can delete (403 otherwise).
+- [x] Board summaries gain `role` and `owner`; own boards list first. The overview covers shared boards. Account deletion removes the user's own boards and memberships.
+- [x] UI: "Shared by {owner}" in the nav and header, "Members" panel (owner shares and removes; members read-only), members see "Leave board" instead of rename/delete, comment delete only where allowed.
+- [x] Tests: `test_sharing.py` (11 tests: listing, roles, member edits, 403 vs 404, add/leave/remove, comment permissions, overview, duplicate, account deletion); `MembersPanel.test.tsx`, member workspace flows; two-context e2e.
+
+### Part 22: Sessions and sidebar (done 2026-10-15)
+- [x] Sessions expire after 30 days (`SESSION_DAYS` in `auth.py`): older sessions are rejected, pruned when a new session starts, and the cookie carries a matching `Max-Age`.
+- [x] The workspace sidebar collapses to a rail (desktop) or a thin bar (phone) and remembers the choice per browser.
 
 ## Suggested implementation notes
 

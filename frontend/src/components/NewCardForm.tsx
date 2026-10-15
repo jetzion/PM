@@ -1,21 +1,37 @@
 import { useState, type FormEvent } from "react";
+import { CardFieldInputs } from "@/components/CardFieldInputs";
+import type { CardFields, Label, Priority } from "@/lib/kanban";
 
-const initialFormState = { title: "", details: "" };
-
-type NewCardFormProps = {
-  onAdd: (title: string, details: string) => void;
+const initialFormState = {
+  title: "",
+  details: "",
+  priority: "medium" as Priority,
+  dueDate: "",
+  labelIds: [] as string[],
 };
 
-export const NewCardForm = ({ onAdd }: NewCardFormProps) => {
+type NewCardFormProps = {
+  boardLabels: Label[];
+  onAdd: (fields: CardFields) => void;
+};
+
+export const NewCardForm = ({ boardLabels, onAdd }: NewCardFormProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [formState, setFormState] = useState(initialFormState);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!formState.title.trim()) {
+    const title = formState.title.trim();
+    if (!title) {
       return;
     }
-    onAdd(formState.title.trim(), formState.details.trim());
+    onAdd({
+      title,
+      details: formState.details.trim(),
+      priority: formState.priority,
+      dueDate: formState.dueDate || null,
+      labelIds: formState.labelIds,
+    });
     setFormState(initialFormState);
     setIsOpen(false);
   };
@@ -41,6 +57,14 @@ export const NewCardForm = ({ onAdd }: NewCardFormProps) => {
             placeholder="Details"
             rows={3}
             className="w-full resize-none rounded-xl border border-[var(--stroke)] bg-white px-3 py-2 text-sm text-[var(--gray-text)] outline-none transition focus:border-[var(--primary-blue)]"
+          />
+          <CardFieldInputs
+            priority={formState.priority}
+            dueDate={formState.dueDate}
+            labelIds={formState.labelIds}
+            boardLabels={boardLabels}
+            labelSuffix=" for new card"
+            onChange={(changes) => setFormState((prev) => ({ ...prev, ...changes }))}
           />
           <div className="flex items-center gap-2">
             <button

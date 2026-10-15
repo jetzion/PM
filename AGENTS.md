@@ -3,8 +3,9 @@
 ## Business Requirements
 
 This project is building a Project Management App. Key features:
-- A user can sign in
-- When signed in, the user sees a Kanban board representing their project
+- A user can register, sign in, sign out, and change their password
+- A signed-in user has multiple Kanban boards (projects) they can create, switch between, rename, and delete
+- Users only ever see their own boards
 - The Kanban board has columns that the user and the AI can add, rename, and delete
 - The cards on the Kanban board can be moved with drag and drop, and edited
 - Users and the AI can create, edit, move, and delete cards
@@ -12,11 +13,9 @@ This project is building a Project Management App. Key features:
 
 ## Limitations
 
-For the MVP, there will only be a user sign in (hardcoded to 'user' and 'password', client-only) but the database will support multiple users for future.
+Auth is username + password with server-side sessions (httpOnly cookie). A demo account `user` / `password` is seeded.
 
-For the MVP, there will only be 1 Kanban board per signed in user.
-
-For the MVP, this will run locally (in a docker container)
+This runs locally (in a docker container).
 
 AI chat history stays in the current browser session only. When the AI updates the board, it returns a full replacement board.
 
@@ -29,7 +28,7 @@ AI chat history stays in the current browser session only. When the AI updates t
 - Use OpenRouter for the AI calls. An OPENROUTER_API_KEY is in .env in the project root
 - Use `openai/gpt-oss-120b` as the model
 - Use SQLite local database for the database, creating a new db if it doesn't exist
-- Normalized tables (users, columns, cards). Seed the dummy user with the frontend demo board.
+- Normalized tables (users, sessions, boards, columns, cards). Every new user starts with the frontend demo board. See docs/DATABASE.md.
 - Start and Stop server scripts for Mac, PC, Linux in scripts/
 - App listens on port 8000
 - SQLite file is stored on a Docker volume so it survives container restarts

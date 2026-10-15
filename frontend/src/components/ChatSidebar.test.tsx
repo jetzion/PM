@@ -2,14 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KanbanBoard } from "@/components/KanbanBoard";
 import { initialData, type BoardData } from "@/lib/kanban";
-
-const jsonResponse = (body: unknown) =>
-  Promise.resolve(
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    })
-  );
+import { jsonResponse } from "@/test/jsonResponse";
+import { boardProps } from "@/test/boardProps";
 
 const boardWithCard = (title: string): BoardData => ({
   ...initialData,
@@ -18,7 +12,16 @@ const boardWithCard = (title: string): BoardData => ({
   ),
   cards: {
     ...initialData.cards,
-    "card-chat": { id: "card-chat", title, details: "Added from chat." },
+    "card-chat": {
+      id: "card-chat",
+      title,
+      details: "Added from chat.",
+      priority: "medium",
+      dueDate: null,
+      labelIds: [],
+      checklist: [],
+      commentCount: 0,
+    },
   },
 });
 
@@ -26,7 +29,7 @@ const mockFetch = (
   chatHandler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 ) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-    if (input === "/api/chat") {
+    if (input === "/api/boards/1/chat") {
       return chatHandler(input, init);
     }
     return jsonResponse(initialData);
@@ -54,14 +57,14 @@ describe("ChatSidebar", () => {
       jsonResponse({ message: "Hi there.", board: null })
     );
 
-    render(<KanbanBoard />);
+    render(<KanbanBoard {...boardProps} />);
     await screen.findByRole("heading", { name: /ai chat/i });
     await sendMessage("Hello");
 
     expect(await screen.findByText("Hi there.")).toBeVisible();
     expect(screen.getByText("Hello")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/chat",
+      "/api/boards/1/chat",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ message: "Hello", history: [] }),
@@ -74,7 +77,7 @@ describe("ChatSidebar", () => {
       jsonResponse({ message: "Added Chat card.", board: boardWithCard("Chat card") })
     );
 
-    render(<KanbanBoard />);
+    render(<KanbanBoard {...boardProps} />);
     await screen.findByText("Align roadmap themes");
     await sendMessage("Add a card");
 
@@ -85,7 +88,7 @@ describe("ChatSidebar", () => {
   it("leaves the board unchanged when the reply has no board", async () => {
     mockFetch(() => jsonResponse({ message: "Nothing changed.", board: null }));
 
-    render(<KanbanBoard />);
+    render(<KanbanBoard {...boardProps} />);
     await screen.findByText("Align roadmap themes");
     await sendMessage("Just talk");
 
@@ -102,7 +105,7 @@ describe("ChatSidebar", () => {
       return jsonResponse({ message: reply, board: null });
     });
 
-    const { unmount } = render(<KanbanBoard />);
+    const { unmount } = render(<KanbanBoard {...boardProps} />);
     await screen.findByRole("heading", { name: /ai chat/i });
     await sendMessage("First question");
     expect(await screen.findByText("First reply.")).toBeVisible();
@@ -110,14 +113,14 @@ describe("ChatSidebar", () => {
     await sendMessage("Second question");
     expect(await screen.findByText("Second reply.")).toBeVisible();
 
-    expect(JSON.parse(sessionStorage.getItem("pm-chat-history") ?? "[]")).toEqual([
+    expect(JSON.parse(sessionStorage.getItem("pm-chat-history:1") ?? "[]")).toEqual([
       { role: "user", content: "First question" },
       { role: "assistant", content: "First reply." },
       { role: "user", content: "Second question" },
       { role: "assistant", content: "Second reply." },
     ]);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/chat",
+      "/api/boards/1/chat",
       expect.objectContaining({
         body: JSON.stringify({
           message: "Second question",
@@ -130,8 +133,70 @@ describe("ChatSidebar", () => {
     );
 
     unmount();
-    render(<KanbanBoard />);
+    render(<KanbanBoard {...boardProps} />);
     expect(await screen.findByText("Second reply.")).toBeVisible();
     expect(screen.getByText("First question")).toBeVisible();
+  });
+
+  it("scrolls the message list to the newest message", async () => {
+    // jsdom has no layout: give elements a height and record scrollTop writes.
+    const scrolled: number[] = [];
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(900);
+    const scrollTop = vi
+      .spyOn(HTMLElement.prototype, "scrollTop", "set")
+      .mockImplementation(function (this: HTMLElement, value: number) {
+        if (this.dataset.testid === "chat-messages") {
+          scrolled.push(value);
+        }
+      });
+    sessionStorage.setItem(
+      "pm-chat-history:1",
+      JSON.stringify([{ role: "user", content: "Earlier" }])
+    );
+    mockFetch(() => jsonResponse({ message: "Latest reply.", board: null }));
+
+    render(<KanbanBoard {...boardProps} />);
+    // Restored history is scrolled to the bottom.
+    expect(await screen.findByText("Earlier")).toBeVisible();
+    await vi.waitFor(() => expect(scrolled.length).toBeGreaterThan(0));
+
+    scrolled.length = 0;
+    await sendMessage("New question");
+    expect(await screen.findByText("Latest reply.")).toBeVisible();
+    expect(scrolled).toContain(900);
+
+    scrollTop.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the server's reason when the AI call fails and keeps the draft", async () => {
+    mockFetch(() =>
+      jsonResponse(
+        { detail: "The OpenRouter account is out of credits. Add credits at openrouter.ai to use the AI." },
+        502
+      )
+    );
+
+    render(<KanbanBoard {...boardProps} />);
+    await screen.findByText("Align roadmap themes");
+    await sendMessage("Add a card");
+
+    expect(
+      await screen.findByText(
+        "The OpenRouter account is out of credits. Add credits at openrouter.ai to use the AI."
+      )
+    ).toBeVisible();
+    expect(screen.getByLabelText(/message/i)).toHaveValue("Add a card");
+    expect(sessionStorage.getItem("pm-chat-history:1")).toBeNull();
+  });
+
+  it("falls back to a generic message when the network fails", async () => {
+    mockFetch(() => Promise.reject(new TypeError("Failed to fetch")));
+
+    render(<KanbanBoard {...boardProps} />);
+    await screen.findByText("Align roadmap themes");
+    await sendMessage("Hello");
+
+    expect(await screen.findByText("Unable to reach the AI.")).toBeVisible();
   });
 });

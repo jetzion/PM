@@ -41,7 +41,7 @@ npm run build                                      # static export to out/
 
 E2E notes:
 - Playwright targets the Docker app at `127.0.0.1:8000`, not the Next dev server. It runs `scripts/start.sh` only if nothing is already answering `/api/health`, so rebuild with `start.sh` first when the code has changed.
-- Every e2e test resets the board with `PUT /api/board`, which overwrites whatever is in the `pm-data` volume.
+- Every e2e test registers its own unique user, so tests are isolated; they do add throwaway users to the `pm-data` volume.
 - `npm run dev` (port 3000) has no backend behind it; `/api` calls fail there. Use it for layout work only.
 
 ## Architecture
@@ -55,26 +55,39 @@ The whole app passes around a single shape, defined in `frontend/src/lib/kanban.
 ```ts
 type BoardData = {
   columns: { id: string; title: string; cardIds: string[] }[];
-  cards: Record<string, { id: string; title: string; details: string }>;
+  cards: Record<string, {
+    id: string; title: string; details: string;
+    priority: "low" | "medium" | "high"; dueDate: string | null; // YYYY-MM-DD
+    labelIds: string[];
+    checklist: { id: string; text: string; done: boolean }[];
+    commentCount: number; // read-only; comments live at /cards/{id}/comments
+  }>;
+  labels: { id: string; name: string; color: "yellow" | "blue" | "purple" | "navy" | "gray" }[];
+  doneColumnId: string | null; // cards in this column are completed, never overdue
 };
 ```
 
-Every board-mutating endpoint returns the full `BoardData`, and the frontend replaces its state with that response rather than patching locally (`applyBoardChange` in `KanbanBoard.tsx`). Drag and drop is the one exception: it computes the new order locally with `moveCard`, then sends `POST /api/cards/{id}/move` with `{ columnId, position }`. The wire format is camelCase (`cardIds`, `columnId`).
+Board data lives at `/api/boards/{boardId}/...`. Every column/card endpoint returns the full `BoardData`, and the frontend replaces its state with that response rather than patching locally (`applyBoardChange` in `KanbanBoard.tsx`). Drag and drop computes the new order locally with `moveCard`, then sends `POST /api/boards/{id}/cards/{cardId}/move` with `{ columnId, position }`. The wire format is camelCase (`cardIds`, `columnId`). Column, card, and label ids are unique per board only.
 
 ### Backend
 
-- `main.py` — routes and request models. Every route resolves the single seeded user via `demo_user_id`; there is no backend auth.
-- `database.py` — SQLite schema (`users`, `columns`, `cards`; no `boards` table), seed data, and the read/write mapping between normalized rows and `BoardData`. Ordering is a zero-based `position` column that must be reindexed after deletes and moves. `replace_board` validates then rewrites all of a user's columns and cards; callers wrap it in `with conn:` so an invalid board rolls back.
+- `main.py` — routes and request models. `current_user` reads the `pm_session` cookie (401 if missing/invalid). Board-scoped routes sit on `board_router` and depend on `shared_board` (owner or member; 404 for anyone else) or, for rename/delete/add member, `owned_board` (403 for members). Use `shared_board` for new content routes.
+- `auth.py` — scrypt password hashing and session tokens (stdlib only).
+- `database.py` — SQLite schema (`users`, `sessions`, `boards`, `columns`, `cards`), the legacy single-board migration, seed data, and the read/write mapping between normalized rows and `BoardData`. Ordering is a zero-based `position` column that must be kept contiguous after deletes and moves. `replace_board` validates then rewrites all of a board's columns and cards; callers wrap it in `with conn:` so an invalid board rolls back.
 - `ai.py` — OpenRouter call via `urllib` (no SDK), model `openai/gpt-oss-120b`, with a strict JSON schema response format.
 
-The DB path is `/data/app.db` (Docker volume `pm-data`), overridable with `PM_DB_PATH`. Tests set `PM_DB_PATH` to a temp file and mock `ai.urllib.request.urlopen`; schema creation and seeding happen in the FastAPI lifespan, so tests that depend on startup use `with TestClient(app)`.
+The DB path is `/data/app.db` (Docker volume `pm-data`), overridable with `PM_DB_PATH`. Tests set `PM_DB_PATH` to a temp file and mock `ai.urllib.request.urlopen`; schema creation and seeding happen in the FastAPI lifespan. Use the `make_client` / `client` / `board_url` fixtures in `tests/conftest.py` for signed-in clients.
 
-The demo seed board exists twice and must stay in sync: `DEMO_BOARD` in `backend/database.py` and `initialData` in `frontend/src/lib/kanban.ts` (now only a test fixture and reference).
+Comments are the exception to the full-board pattern: they are not in `BoardData`, their routes return the card's comment list, and they are pruned (not cascaded) when cards disappear because `replace_board` re-inserts cards.
+
+Adding a card field means touching: the `cards` schema plus a migration step in `init_database`, `get_board` / `validate_board` / `replace_board`, the Pydantic models, the AI `CHAT_RESPONSE_FORMAT`, the `Card` type, and both seed copies below.
+
+The demo seed board (given to every new user) exists twice and must stay in sync: `DEMO_BOARD` in `backend/database.py` and `initialData` in `frontend/src/lib/kanban.ts` (now only a test fixture and reference).
 
 ### AI chat flow
 
-`POST /api/chat` takes `{ message, history }`. The backend loads the current board, puts it in the system prompt, and asks the model for `{ message, board | null }`. A non-null board is a full replacement saved through `replace_board`; if it fails validation it is discarded and the reply notes the update was not applied. The frontend `ChatSidebar` keeps history in `sessionStorage` (`pm-chat-history`), never in the database, and swaps in any returned board.
+`POST /api/boards/{id}/chat` takes `{ message, history }`. The backend loads that board, puts it in the system prompt, and asks the model for `{ message, board | null }`. A non-null board is a full replacement saved through `replace_board`; if it fails validation it is discarded and the reply notes the update was not applied. The frontend `ChatSidebar` keeps per-board history in `sessionStorage` (`pm-chat-history:{boardId}`), never in the database, and swaps in any returned board.
 
 ### Frontend
 
-`AppShell` owns the client-only login (`user` / `password`, flag `pm-demo-authenticated` in `localStorage`) and renders `KanbanBoard`, which owns board state, drag and drop (`@dnd-kit`), and the chat sidebar. All HTTP goes through `src/lib/api.ts` using same-origin relative paths. Brand colors are CSS variables in `src/app/globals.css`; use those tokens for new UI.
+`AppShell` checks `GET /api/auth/me` and shows sign-in / registration or the `Workspace`. `Workspace` owns the board list sidebar and account panel and renders `KanbanBoard` for the active board, which owns board state, drag and drop (`@dnd-kit`), and the AI chat. The chat is portaled into a slot in the lower part of the workspace sidebar (`chatSlot` prop). All HTTP goes through `src/lib/api.ts` using same-origin relative paths. Brand colors are CSS variables in `src/app/globals.css`; use those tokens for new UI.

@@ -6,6 +6,10 @@
   --secondary-purple: #753991;
   --navy-dark: #032147;
   --gray-text: #888888;
+  /* Priority is ordinal: one purple ramp, light (low) to dark (high). */
+  --priority-low: #dcc8e6;
+  --priority-medium: #a87bbf;
+  --priority-high: #753991;
   --surface: #f7f8fb;
   --surface-strong: #ffffff;
   --stroke: rgba(3, 33, 71, 0.08);
